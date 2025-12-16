@@ -1,0 +1,129 @@
+from datetime import datetime, timedelta
+
+import pandas as pd
+import requests
+import pandas_ta as ta
+
+# --- variables you want to import ---
+kite_order_auth = 'enctoken 8jEThiJusXvN2zL0KsbMnPRyVI7VsyLirgm0lC3HdcOZCb9yVVgw9m6qcaLGI5tcgUz1Ge3kIXcPvfZ1tlng7092t+RvDkMbyy9XtG6JJsdyHUjPFIgI2g=='
+kite_cookies = "kf_session=OY1UOAH9I3EYuikN7Gw3cyeuNIlFNsFc; __cf_bm=G3IMgFzgi4MteQXgW1wI84JMS4MHJomX4Hk7uo24pF8-1765710007-1.0.1.1-AcOS9QNnRkBarLDKr99i14u1wxvPPO_tuP6Kg4V9rNQCk2OqxIj02CUj8iB8YLOuZCZj2hO7dxfyu6XDD3j5bOYj5Kyh4elLZYj9TVQTn.c; _cfuvid=9fKzIZyh5geC3uQ2rOMLTYZeRtnn_8pMp3VNtedJ8S0-1765710007306-0.0.1.1-604800000; user_id=UCF437; public_token=2Q7pHp9kzHigsE5C6ML9fDEwEKj9doeI; enctoken=8jEThiJusXvN2zL0KsbMnPRyVI7VsyLirgm0lC3HdcOZCb9yVVgw9m6qcaLGI5tcgUz1Ge3kIXcPvfZ1tlng7092t+RvDkMbyy9XtG6JJsdyHUjPFIgI2g=="
+
+csr_token = '2Q7pHp9kzHigsE5C6ML9fDEwEKj9doeI'
+
+headers = {
+    "Authorization": f"{kite_order_auth}"
+}
+companies = ["BHARTIARTL"]
+
+sdt = datetime(2024, 1, 1)
+edt = datetime(2025, 12, 13)
+
+timeframe = 'minute'
+
+
+USER_ID = 'UCF437'
+def read_company_data(kite_cookies, csr_token, USER_ID, headers, sdt, edt, companies, timeframe):
+    company_data = {}
+
+    for company in companies:
+        current_start = sdt
+        data = []  # List to store all the data for the current company
+        chunk_size = 60  # Maximum allowed days per API call
+
+        if company in ['NIFTY500']:
+            instrument_token = '268041'
+        elif company in ['BHARTIARTL26JANFUT']:
+            instrument_token = '15171586'
+        else:
+            instrument_token = get_instrument_token(kite_cookies, csr_token, USER_ID, company)
+
+        url = f"https://kite.zerodha.com/oms/instruments/historical/{instrument_token}/{timeframe}"
+
+        while current_start < edt:
+            current_end = min(current_start + timedelta(days=chunk_size - 1), edt)  # End date for the current chunk
+
+            params = {
+                "from": current_start.strftime("%Y-%m-%d"),
+                "to": current_end.strftime("%Y-%m-%d")
+            }
+
+            response = requests.get(url, params=params, headers=headers)
+
+            if response.status_code == 200:
+                response_json = response.json()
+                chunk_data = response_json.get("data", {}).get("candles",
+                                                               [])  # Accessing candles inside the entry object
+                data.extend(chunk_data)  # Append the fetched chunk to the main data list
+                print(f"Fetched data from {current_start.strftime('%Y-%m-%d')} to {current_end.strftime('%Y-%m-%d')}")
+            else:
+                print(
+                    f"Error fetching data from {current_start.strftime('%Y-%m-%d')} to {current_end.strftime('%Y-%m-%d')}. Status code: {response.status_code}")
+                break
+
+            current_start = current_end + timedelta(days=1)
+
+        print(f"Total data points fetched for {company}: {len(data)}")
+
+        All_Data = pd.DataFrame(data, columns=["datetime", "open", "high", "low", "close", "volume"])
+        All_Data['rsi'] = ta.rsi(All_Data['close'], length=14)
+        one_min_super_trend_df_10_2 = ta.supertrend(All_Data['high'], All_Data['low'],
+                                                    All_Data['close'], period=10, multiplier=2)
+
+        one_min_super_trend_df_10_4 = ta.supertrend(All_Data['high'], All_Data['low'],
+                                                    All_Data['close'], period=10, multiplier=4)
+
+        All_Data['super_trend_10_2'] = one_min_super_trend_df_10_2.iloc[:, 0]
+
+        All_Data['super_trend_10_4'] = one_min_super_trend_df_10_4.iloc[:, 0]
+
+        All_Data['datetime'] = pd.to_datetime(All_Data['datetime'])
+
+        company_data[company] = All_Data
+
+    return company_data
+
+
+def get_instrument_token(kite_cookies, csr_token, USER_ID, SYMBOL):
+    url = 'https://kite.zerodha.com/api/marketwatch/1/items'
+
+    headers = {
+        'accept': 'application/json, text/plain, */*',
+        'accept-language': 'en-US,en;q=0.9',
+        'content-type': 'application/x-www-form-urlencoded',
+        'cookie': kite_cookies,
+        'origin': 'https://kite.zerodha.com',
+        'priority': 'u=1, i',
+        'sec-ch-ua': '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+        'x-csrftoken': csr_token,
+        'x-kite-app-uuid': '1e033595-e722-4131-b69f-8525d9a1a67c',
+        'x-kite-userid': USER_ID,
+        'x-kite-version': '3.0.0',
+    }
+
+    data = {
+        'exchange': 'NSE',
+        'tradingsymbol': SYMBOL,
+        'weight': '58.0003'
+    }
+
+    # Send the POST request
+    response = requests.post(url, headers=headers, data=data)
+
+    response_data = response.json()
+
+    # Extract the instrument_token from the response
+    instrument_token = response_data['data']['instrument_token']
+
+    return instrument_token
+
+
+company_data = read_company_data(kite_cookies, csr_token, USER_ID,
+                                       headers,
+                                       sdt, edt, companies,
+                                       timeframe)
